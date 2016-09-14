@@ -8,6 +8,7 @@
 #   -NSXManagerOVF C:\VMware-NSX-Manager-6.2.2-3604087.ova  - Location of the NSX Manager OVA (optional) (yes, you have to download this yourself)
 #   -DeployOVF             - Deploy the NSX Manager (optional)
 #   -RegistervCenter       - Register the NSX Manager to vCenter and SSO (optional)
+#   -InsertLicense         - Insert the NSX License into vCenter (required in 6.2.3+ before host prep)
 #   -DeployControllers     - Deploy the configured amount of NSX controllers (optional)
 #   -PrepareCluster        - Prepare the ESXi hosts in the vSphere cluster, configure VXLAN and add a Transport Zone (optional)
 #   -AddExclusions         - Add the VMs to the distributed firewall exclusion list (optional)
@@ -43,6 +44,9 @@ param (
   [parameter(Mandatory=$false, ValueFromPipeLine=$true, ValueFromPipeLineByPropertyName=$true)]
   [ValidateNotNullOrEmpty()]
   [switch]$RegistervCenter,
+  [parameter(Mandatory=$false, ValueFromPipeLine=$true, ValueFromPipeLineByPropertyName=$true)]
+  [ValidateNotNullOrEmpty()]
+  [switch]$InsertLicense,
   [parameter(Mandatory=$false, ValueFromPipeLine=$true, ValueFromPipeLineByPropertyName=$true)]
   [ValidateNotNullOrEmpty()]
   [switch]$DeployControllers,
@@ -127,6 +131,7 @@ $NSX_VC_Cluster   = $WorkSheet.Cells.Item(7, 4).Value()
 $NSX_VC_Network   = $WorkSheet.Cells.Item(7, 5).Value()
 $NSX_VC_Datastore = $WorkSheet.Cells.Item(7, 6).Value()
 $NSX_VC_Folder    = $WorkSheet.Cells.Item(7, 7).Value()
+$NSX_License      = $WorkSheet.Cells.Item(7, 8).Value()
 
 $NSX_VC_Connect_IP        = $WorkSheet.Cells.Item(11, 1).Value()
 $NSX_VC_Connect_Username  = $WorkSheet.Cells.Item(11, 2).Value()
@@ -235,6 +240,27 @@ if($RegistervCenter.IsPresent)
   # Configure vCenter SSO on NSX Manager
   $sso = Set-NSXManager -SsoServer $NSX_VC_Connect_IP -SsoUserName $NSX_VC_Connect_Username -SsoPassword $NSX_VC_Connect_Password -AcceptAnyThumbprint
   Write-Host "Configured vCenter and SSO on NSX Manager!" -ForegroundColor "green"
+}
+
+# Thanks to Anthony Burke for the upcoming license bit!
+# t. @pandom / w. http://networkinferno.net/license-nsx-via-automation-with-powercli
+if($InsertLicense.IsPresent)
+{
+  Write-Host "Assigning NSX license to vCenter..." -ForegroundColor "yellow"
+  $ServiceInstance = Get-View ServiceInstance
+  $LicenseManager = Get-View $ServiceInstance.Content.licenseManager
+  $LicenseAssignmentManager = Get-View $LicenseManager.licenseAssignmentManager
+  $output = $LicenseAssignmentManager.UpdateAssignedLicense("nsx-netsec", $NSX_License, $NULL)
+
+  # Check if license has been properly set
+  $CheckLicense = $LicenseAssignmentManager.QueryAssignedLicenses("nsx-netsec")
+  if($CheckLicense.AssignedLicense.LicenseKey -ne $NSX_License) {
+    Write-Host "Setting the NSX License failed! Error: $CheckLicense" -ForegroundColor "red"
+    Exit
+  }
+  else {
+    Write-Host "Configured NSX License on vCenter!" -ForegroundColor "green"
+  }
 }
 
 if($DeployControllers.IsPresent)
